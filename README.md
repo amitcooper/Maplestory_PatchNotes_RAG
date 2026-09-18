@@ -59,3 +59,13 @@ python src/generate.py "what changed for Kaiser since March 2026"
 ```
 
 Runs Phase 5 retrieval, then asks a Groq-hosted model (`openai/gpt-oss-120b`) to answer using only the retrieved excerpts, citing the patch/date for every claim. Needs a free API key from [console.groq.com](https://console.groq.com) saved in `.env` as `GROQ_API_KEY=...`.
+
+## Phase 7: Evaluate
+
+```
+python src/eval.py
+```
+
+Runs a hand-built set of 10 questions (facts verified against the actual scraped patches) through 4 retrieval configs -- baseline, +cross-encoder reranking, +LLM query rewriting, +both -- and reports mean retrieval recall for each, then a full-generation answer-quality check on the winning config.
+
+**Finding:** on this corpus, plain semantic + metadata-filtered retrieval (the Phase 5 baseline) already scores highest. Cross-encoder reranking (`src/rerank.py`) is neutral. LLM query rewriting measurably *hurts* recall -- it tends to paraphrase away from the patch notes' exact terminology, which the baseline already matches well. Both remain available as opt-in parameters on `retrieve()` (`use_reranker`, `semantic_query`) rather than being turned on by default, since the evidence doesn't support it. Diagnosing two initial answer misses also led to a real fix: `retrieve()`'s per-patch chunk limit now scales up when a query narrows to few patches, instead of a flat cap that was dropping relevant detail on narrow single-version queries.

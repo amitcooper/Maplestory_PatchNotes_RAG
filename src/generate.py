@@ -23,6 +23,24 @@ only the official patch notes excerpts provided below. Rules:
 - If the excerpts show the same thing changing across multiple patches, describe it as a timeline, in date order.
 - Be concise. Don't pad the answer with information the excerpts don't contain."""
 
+REWRITE_SYSTEM_PROMPT = """Rewrite the user's question into a short, keyword-dense search \
+query for a semantic search engine over MapleStory patch notes. Keep any class/boss/item \
+names and dates exact. Expand vague phrasing into concrete terms (e.g. "gotten any buffs" \
+-> "skill damage buff increase"; "easier to level" -> "EXP required decreased"). \
+Return only the rewritten query, nothing else."""
+
+
+def rewrite_query(client: Groq, question: str) -> str:
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+        ],
+        temperature=0.0,
+    )
+    return response.choices[0].message.content.strip()
+
 
 def build_context(result: dict) -> str:
     blocks = []

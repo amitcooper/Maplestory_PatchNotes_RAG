@@ -27,6 +27,7 @@ COLLECTION_NAME = "maple_patch_notes"
 
 CHUNKS_PER_PATCH = 3
 MAX_PATCHES = 8
+MAX_TOTAL_CHUNKS = 15
 
 MONTHS = {
     "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
@@ -122,7 +123,16 @@ def get_collection() -> chromadb.Collection:
     return client.get_collection(COLLECTION_NAME, embedding_function=embedding_fn)
 
 
-def retrieve(query: str, collection: chromadb.Collection, version_dates: dict[int, str]) -> dict:
+def retrieve(
+    query: str,
+    collection: chromadb.Collection,
+    version_dates: dict[int, str],
+    semantic_query: str | None = None,
+    use_reranker: bool = False,
+) -> dict:
+    # semantic_query lets a caller (e.g. eval.py testing query rewriting) swap
+    # in a different string for the embedding search while entity/date parsing
+    # still runs against the user's original wording.
     parsed = parse_query(query, version_dates)
     has_filter = any([parsed["date_min"], parsed["date_max"], parsed["version_eq"], parsed["entity"]])
 
@@ -131,7 +141,7 @@ def retrieve(query: str, collection: chromadb.Collection, version_dates: dict[in
     # the corpus is small enough (a few thousand chunks) that this is cheap.
     n_results = collection.count() if has_filter else max(CHUNKS_PER_PATCH * MAX_PATCHES, 20)
 
-    result = collection.query(query_texts=[query], n_results=n_results)
+    result = collection.query(query_texts=[semantic_query or query], n_results=n_results)
 
     candidates = []
     for doc, meta, dist in zip(result["documents"][0], result["metadatas"][0], result["distances"][0]):
@@ -145,13 +155,30 @@ def retrieve(query: str, collection: chromadb.Collection, version_dates: dict[in
             continue
         candidates.append({"text": doc, "meta": meta, "distance": dist})
 
+    if use_reranker:
+        from rerank import rerank
+
+        candidates = rerank(semantic_query or query, candidates)
+
     by_patch: dict[int, list[dict]] = {}
     for c in candidates:
         by_patch.setdefault(c["meta"]["version"], []).append(c)
 
+    def relevance(c: dict) -> float:
+        # Higher is better either way: rerank_score already is, distance is
+        # inverted since it's a similarity *distance* (lower = more similar).
+        return c["rerank_score"] if "rerank_score" in c else -c["distance"]
+
+    # When few patches match, let each keep more chunks instead of a flat cap --
+    # e.g. a single-version query like "v.271" was losing specific facts (a
+    # boss's phase-3 mechanic, say) that ranked #4 within that one patch's
+    # candidates purely because CHUNKS_PER_PATCH was a flat 3 regardless of
+    # how many other patches were competing for context-window budget.
+    per_patch_limit = max(CHUNKS_PER_PATCH, MAX_TOTAL_CHUNKS // max(1, len(by_patch)))
+
     patches = []
     for version, chunks in by_patch.items():
-        chunks = chunks[:CHUNKS_PER_PATCH]  # already semantically ranked by chromadb
+        chunks = chunks[:per_patch_limit]  # already ranked (reranked if use_reranker)
         patches.append(
             {
                 "version": version,
@@ -163,7 +190,7 @@ def retrieve(query: str, collection: chromadb.Collection, version_dates: dict[in
         )
 
     is_time_query = (parsed["date_min"] or parsed["date_max"]) and parsed["entity"] is not None
-    patches.sort(key=lambda p: p["date"] if is_time_query else -sum(c["distance"] for c in p["chunks"]))
+    patches.sort(key=lambda p: p["date"] if is_time_query else -sum(relevance(c) for c in p["chunks"]))
     patches = patches[:MAX_PATCHES]
 
     return {"query": query, "filter_description": parsed["description"], "patches": patches}
@@ -182,7 +209,8 @@ def print_results(result: dict) -> None:
             heading = c["meta"]["section"]
             if c["meta"]["subsection"]:
                 heading += f" > {c['meta']['subsection']}"
-            print(f"   [{heading}] (distance {c['distance']:.3f})")
+            score = f"rerank {c['rerank_score']:.3f}" if "rerank_score" in c else f"distance {c['distance']:.3f}"
+            print(f"   [{heading}] ({score})")
             preview = c["text"][:200].replace("\n", " ")
             print(f"     {preview}...")
         print()

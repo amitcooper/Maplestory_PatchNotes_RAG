@@ -51,3 +51,11 @@ python src/retrieve.py "what changed for Kaiser since March 2026"
 ```
 
 Entity- and date-aware retrieval: recognizes class/boss names and phrases like "since June", "before March 2026", or "v.269", pre-filters chunks accordingly, then ranks semantically and groups results by patch.
+
+## Phase 6: Generate
+
+```
+python src/generate.py "what changed for Kaiser since March 2026"
+```
+
+Runs Phase 5 retrieval, then asks a Groq-hosted model (`openai/gpt-oss-120b`) to answer using only the retrieved excerpts, citing the patch/date for every claim. Needs a free API key from [console.groq.com](https://console.groq.com) saved in `.env` as `GROQ_API_KEY=...`.

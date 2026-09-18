@@ -1,0 +1,92 @@
+"""Phase 6: answer a question by retrieving chunks and asking an LLM to synthesize them.
+
+Backend: Groq's free API (default). Kept behind a single generate_answer(prompt)
+call so swapping in a local Ollama model later is a one-function change, not a
+redesign -- not built now since nothing in this project needs it yet.
+"""
+
+import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+from groq import Groq
+
+from retrieve import get_collection, load_version_dates, retrieve
+
+MODEL = "openai/gpt-oss-120b"
+
+SYSTEM_PROMPT = """You are an assistant that answers questions about MapleStory using \
+only the official patch notes excerpts provided below. Rules:
+- Only use information in the provided excerpts. If they don't answer the question, say so plainly.
+- Every claim about something that changed must cite which patch it's from (e.g. "v.269 - Ride the Lightning, 2026-06-16").
+- If the excerpts show the same thing changing across multiple patches, describe it as a timeline, in date order.
+- Be concise. Don't pad the answer with information the excerpts don't contain."""
+
+
+def build_context(result: dict) -> str:
+    blocks = []
+    for patch in result["patches"]:
+        header = f"### {patch['patch_name']} ({patch['date']})"
+        body = "\n\n".join(
+            f"[{c['meta']['section']}"
+            + (f" > {c['meta']['subsection']}" if c["meta"]["subsection"] else "")
+            + f"]\n{c['text']}"
+            for c in patch["chunks"]
+        )
+        blocks.append(f"{header}\n{body}")
+    return "\n\n".join(blocks)
+
+
+def generate_answer(client: Groq, question: str, context: str) -> str:
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Patch notes excerpts:\n\n{context}\n\nQuestion: {question}"},
+        ],
+        temperature=0.2,
+    )
+    return response.choices[0].message.content
+
+
+def print_sources(result: dict) -> None:
+    print("\nSources:")
+    for patch in result["patches"]:
+        print(f"  - {patch['patch_name']} ({patch['date']}) -- {patch['source_url']}")
+
+
+def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+    if len(sys.argv) < 2:
+        print('Usage: python src/generate.py "your question here"')
+        return
+    question = " ".join(sys.argv[1:])
+
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        print("GROQ_API_KEY not found. Add it to .env as GROQ_API_KEY=your_key_here.")
+        return
+
+    collection = get_collection()
+    version_dates = load_version_dates()
+    result = retrieve(question, collection, version_dates)
+
+    if not result["patches"]:
+        print(f"Query: {question!r}")
+        print("No matching patch notes found for this question.")
+        return
+
+    context = build_context(result)
+    client = Groq(api_key=api_key)
+    answer = generate_answer(client, question, context)
+
+    print(f"Query: {question!r}\n")
+    print(answer)
+    print_sources(result)
+
+
+if __name__ == "__main__":
+    main()

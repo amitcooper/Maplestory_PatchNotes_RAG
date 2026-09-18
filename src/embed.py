@@ -1,6 +1,7 @@
 """Phase 4: embed all chunks and load them into a local Chroma collection."""
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -9,7 +10,13 @@ from chromadb.utils import embedding_functions
 
 PROCESSED_DIR = Path(__file__).resolve().parent.parent / "data" / "processed"
 CHUNKS_PATH = PROCESSED_DIR / "chunks.json"
-CHROMA_DIR = Path(__file__).resolve().parent.parent / "data" / "chroma"
+
+# Chroma's on-disk index lives outside the project folder on purpose: this
+# project sits inside OneDrive, and OneDrive's real-time sync corrupts
+# Chroma's binary HNSW index files while they're being written (confirmed:
+# the same collection reads fine from a non-synced path, but reliably fails
+# with "Error loading hnsw index" once it's under OneDrive).
+CHROMA_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "MaplePatchNotesRag" / "chroma"
 
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 COLLECTION_NAME = "maple_patch_notes"

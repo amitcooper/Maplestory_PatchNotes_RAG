@@ -17,3 +17,37 @@ python src/scrape.py
 ```
 
 Fetches the last 15 major-version Patch Notes posts from MapleStory's public news CMS API and saves the raw JSON to `data/raw/`, plus a manifest at `data/raw/index.json`. Re-running skips posts already downloaded; pass `--force` to re-fetch everything.
+
+## Phase 2: Clean
+
+```
+python src/clean.py
+```
+
+Splits each raw article's HTML into `(section, subsection, text)` blocks and writes both a structured `data/processed/{id}.json` and a readable `data/processed/{id}.txt` per patch.
+
+## Phase 3: Chunk
+
+```
+python src/chunk.py
+```
+
+Splits each section's text into ~800-character chunks tagged with date/patch/section/entity/source metadata, written to `data/processed/chunks.json`.
+
+## Phase 4: Embed
+
+```
+python src/embed.py
+```
+
+Embeds every chunk (`sentence-transformers`, `all-MiniLM-L6-v2`) into a local Chroma collection.
+
+**Note:** the vector store is kept at `%LOCALAPPDATA%\MaplePatchNotesRag\chroma`, *not* inside this project folder. This folder is synced by OneDrive, and OneDrive's real-time sync corrupts Chroma's binary index files while they're being written. Keep the vector store outside any cloud-synced folder.
+
+## Phase 5: Retrieve
+
+```
+python src/retrieve.py "what changed for Kaiser since March 2026"
+```
+
+Entity- and date-aware retrieval: recognizes class/boss names and phrases like "since June", "before March 2026", or "v.269", pre-filters chunks accordingly, then ranks semantically and groups results by patch.

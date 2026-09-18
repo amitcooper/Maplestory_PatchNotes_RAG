@@ -4,6 +4,5 @@ __pycache__/
 data/raw/*.json
 !data/raw/.gitkeep
 data/processed/
-data/chroma/
 .env
 .claude/

@@ -28,6 +28,7 @@ COLLECTION_NAME = "maple_patch_notes"
 CHUNKS_PER_PATCH = 3
 MAX_PATCHES = 8
 MAX_TOTAL_CHUNKS = 15
+RELEVANCE_MARGIN = 0.15  # see the entity-filter patch-pruning note in retrieve()
 
 MONTHS = {
     "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
@@ -247,6 +248,23 @@ def retrieve(
         # Higher is better either way: rerank_score already is, distance is
         # inverted since it's a similarity *distance* (lower = more similar).
         return c["rerank_score"] if "rerank_score" in c else -c["distance"]
+
+    if parsed["entity"] and len(by_patch) > 1:
+        # A short boss/class name (e.g. "Baldrix") also shows up as one row in
+        # unrelated multi-boss reward tables in other patches ("Defeat Baldrix
+        # for N points", alongside a dozen other bosses) -- entity_mentioned
+        # correctly tags those too, but they're not actually *about* Baldrix,
+        # and letting them count as "matching patches" was diluting the
+        # per-patch chunk budget so thin that the one patch that actually
+        # introduces Baldrix (and lists what it drops) lost its own relevant
+        # chunks to the cap. Keep only patches whose best chunk is close to
+        # the single best match found anywhere, not just present at all.
+        best_relevance = max(relevance(c) for c in candidates)
+        by_patch = {
+            version: chunks
+            for version, chunks in by_patch.items()
+            if max(relevance(c) for c in chunks) >= best_relevance - RELEVANCE_MARGIN
+        }
 
     # When few patches match, let each keep more chunks instead of a flat cap --
     # e.g. a single-version query like "v.271" was losing specific facts (a

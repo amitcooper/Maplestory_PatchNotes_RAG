@@ -42,6 +42,22 @@ IN_MONTH_RE = re.compile(r"\bin\s+([a-zA-Z]+)\.?\s*(\d{4})?\b", re.IGNORECASE)
 SINCE_VERSION_RE = re.compile(r"\b(since|after)\s+v\.?\s?(\d{3})\b", re.IGNORECASE)
 VERSION_RE = re.compile(r"\bv\.?\s?(\d{3})\b", re.IGNORECASE)
 
+# A "what new X were added" question needs every matching patch, not just
+# whichever chunks happen to rank highest by embedding similarity -- the
+# signal (a handful of chunks out of ~3000) is too sparse for semantic search
+# to reliably surface (confirmed: it was missing real new-job releases like
+# Sia Astelle and Ren). Patch notes consistently title these sections
+# "New Job: X" / "New Boss: X" / "New Area: X", so a direct heading scan is
+# both more precise and more complete than semantic ranking for this case.
+CONTENT_TYPE_KEYWORDS = {
+    "job": "Job", "class": "Job", "classes": "Job", "jobs": "Job",
+    "boss": "Boss", "bosses": "Boss",
+    "area": "Area", "areas": "Area", "map": "Area", "maps": "Area", "region": "Area",
+}
+NEW_CONTENT_RE = re.compile(
+    r"\bnew\s+(" + "|".join(CONTENT_TYPE_KEYWORDS) + r")\b", re.IGNORECASE
+)
+
 
 def resolve_month_year(month_name: str, year: str | None, today: Date) -> Date:
     month = MONTHS[month_name.lower()]
@@ -103,11 +119,18 @@ def parse_query(query: str, version_dates: dict[int, str], today: Date | None = 
             description_parts.append(f"entity={name}")
             break
 
+    content_type = None
+    content_match = NEW_CONTENT_RE.search(query)
+    if content_match:
+        content_type = CONTENT_TYPE_KEYWORDS[content_match.group(1).lower()]
+        description_parts.append(f"new-content-type={content_type}")
+
     return {
         "date_min": date_min,
         "date_max": date_max,
         "version_eq": version_eq,
         "entity": entity,
+        "content_type": content_type,
         "description": "; ".join(description_parts) or "none",
     }
 
@@ -123,6 +146,57 @@ def get_collection() -> chromadb.Collection:
     return client.get_collection(COLLECTION_NAME, embedding_function=embedding_fn)
 
 
+def find_new_content(collection: chromadb.Collection, content_type: str, parsed: dict) -> dict:
+    # Deterministic path for "what new jobs/bosses/areas were added": scans
+    # every chunk's subsection heading for the "New <Type>: <Name>" pattern
+    # patch notes consistently use, rather than relying on semantic ranking
+    # to surface a handful of relevant chunks out of ~3000.
+    heading_re = re.compile(r"^(?:\[[^\]]*\]\s*)?new\s+" + re.escape(content_type) + r"\s*:", re.IGNORECASE)
+    all_items = collection.get(include=["documents", "metadatas"])
+
+    # Group by (version, subsection) rather than just version: a single patch
+    # can introduce more than one of the same content type (v.269 has both
+    # "New Boss: Malefic Star" and "New Boss: Kai") -- capping per patch alone
+    # let whichever one's chunks came first in the scan crowd out the other
+    # entirely once the cap was hit.
+    by_subsection: dict[tuple[int, str], list[dict]] = {}
+    for doc, meta in zip(all_items["documents"], all_items["metadatas"]):
+        if not meta["subsection"] or not heading_re.match(meta["subsection"]):
+            continue
+        if parsed["date_min"] and meta["date"] < parsed["date_min"]:
+            continue
+        if parsed["date_max"] and meta["date"] >= parsed["date_max"]:
+            continue
+        if parsed["version_eq"] and meta["version"] != parsed["version_eq"]:
+            continue
+        key = (meta["version"], meta["subsection"])
+        by_subsection.setdefault(key, []).append({"text": doc, "meta": meta})
+
+    # Some patches split a "New X: Name" announcement across many small
+    # sub-headings (Quick Overview / Skills / Equipment), others put the
+    # whole thing under one heading -- cap each entry's own chunk count so
+    # one heavily-detailed entry can't flood the answer either.
+    CHUNKS_PER_ENTRY = 4
+
+    by_patch: dict[int, list[dict]] = {}
+    for (version, _subsection), chunks in by_subsection.items():
+        by_patch.setdefault(version, []).extend(chunks[:CHUNKS_PER_ENTRY])
+
+    patches = []
+    for version, chunks in by_patch.items():
+        patches.append(
+            {
+                "version": version,
+                "patch_name": chunks[0]["meta"]["patch_name"],
+                "date": chunks[0]["meta"]["date"],
+                "source_url": chunks[0]["meta"]["source_url"],
+                "chunks": chunks,
+            }
+        )
+    patches.sort(key=lambda p: p["date"], reverse=True)
+    return patches
+
+
 def retrieve(
     query: str,
     collection: chromadb.Collection,
@@ -134,6 +208,11 @@ def retrieve(
     # in a different string for the embedding search while entity/date parsing
     # still runs against the user's original wording.
     parsed = parse_query(query, version_dates)
+
+    if parsed["content_type"]:
+        patches = find_new_content(collection, parsed["content_type"], parsed)
+        return {"query": query, "filter_description": parsed["description"], "patches": patches}
+
     has_filter = any([parsed["date_min"], parsed["date_max"], parsed["version_eq"], parsed["entity"]])
 
     # Scan the whole collection whenever a filter is active, so the metadata
@@ -214,7 +293,12 @@ def print_results(result: dict) -> None:
             heading = c["meta"]["section"]
             if c["meta"]["subsection"]:
                 heading += f" > {c['meta']['subsection']}"
-            score = f"rerank {c['rerank_score']:.3f}" if "rerank_score" in c else f"distance {c['distance']:.3f}"
+            if "rerank_score" in c:
+                score = f"rerank {c['rerank_score']:.3f}"
+            elif "distance" in c:
+                score = f"distance {c['distance']:.3f}"
+            else:
+                score = "heading match"
             print(f"   [{heading}] ({score})")
             preview = c["text"][:200].replace("\n", " ")
             print(f"     {preview}...")

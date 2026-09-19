@@ -91,7 +91,15 @@ def build_chunks() -> list[dict]:
         chunk_num = 0
         for section_entry in cleaned["sections"]:
             paragraphs = section_entry["text"].split("\n")
+            # The subsection heading itself (e.g. "New Boss: Baldrix", "New
+            # Job: Ren") often carries the strongest topical signal in the
+            # whole chunk, but clean.py stores it only in metadata, not in
+            # the body text -- so it was never part of what got embedded.
+            # A query like "what bosses were added" needs it IN the text to
+            # match at all; prepending it here is what actually fixes that.
+            heading_prefix = f"{section_entry['subsection']}\n" if section_entry["subsection"] else ""
             for chunk_text in paragraphs_to_chunks(paragraphs, MAX_CHUNK_CHARS):
+                chunk_text = heading_prefix + chunk_text
                 entities = find_entities(chunk_text)
                 if section_entry["subsection"]:
                     for name in find_entities(section_entry["subsection"]):

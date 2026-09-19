@@ -189,8 +189,13 @@ def retrieve(
             }
         )
 
+    # Most-recent-first: a changelog reads newest-to-oldest, and that's what
+    # someone asking "what's changed since X" actually wants to see first.
     is_time_query = (parsed["date_min"] or parsed["date_max"]) and parsed["entity"] is not None
-    patches.sort(key=lambda p: p["date"] if is_time_query else -sum(relevance(c) for c in p["chunks"]))
+    if is_time_query:
+        patches.sort(key=lambda p: p["date"], reverse=True)
+    else:
+        patches.sort(key=lambda p: -sum(relevance(c) for c in p["chunks"]))
     patches = patches[:MAX_PATCHES]
 
     return {"query": query, "filter_description": parsed["description"], "patches": patches}

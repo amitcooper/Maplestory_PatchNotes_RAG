@@ -69,3 +69,11 @@ python src/eval.py
 Runs a hand-built set of 10 questions (facts verified against the actual scraped patches) through 4 retrieval configs -- baseline, +cross-encoder reranking, +LLM query rewriting, +both -- and reports mean retrieval recall for each, then a full-generation answer-quality check on the winning config.
 
 **Finding:** on this corpus, plain semantic + metadata-filtered retrieval (the Phase 5 baseline) already scores highest. Cross-encoder reranking (`src/rerank.py`) is neutral. LLM query rewriting measurably *hurts* recall -- it tends to paraphrase away from the patch notes' exact terminology, which the baseline already matches well. Both remain available as opt-in parameters on `retrieve()` (`use_reranker`, `semantic_query`) rather than being turned on by default, since the evidence doesn't support it. Diagnosing two initial answer misses also led to a real fix: `retrieve()`'s per-patch chunk limit now scales up when a query narrows to few patches, instead of a flat cap that was dropping relevant detail on narrow single-version queries.
+
+## Phase 8: Interface
+
+```
+python src/cli.py
+```
+
+Loads the embedding model, vector store, and Groq client once, then answers questions in a loop instead of paying that startup cost on every invocation like `generate.py` does. Type `exit` or Ctrl+C to quit.

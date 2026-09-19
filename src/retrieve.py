@@ -112,13 +112,16 @@ def parse_query(query: str, version_dates: dict[int, str], today: Date | None = 
             version_eq = version
             description_parts.append(f"only v.{version}")
 
-    entity = None
+    # Collect every known entity mentioned, not just the first -- a query like
+    # "what did Malefic Star and Jupiter drop" names two bosses at once, and
+    # stopping at the first match silently dropped the second one entirely.
+    entities = []
     query_lower = query.lower()
     for name in KNOWN_ENTITIES:
         if re.search(r"\b" + re.escape(name.lower()) + r"\b", query_lower):
-            entity = name
-            description_parts.append(f"entity={name}")
-            break
+            entities.append(name)
+    if entities:
+        description_parts.append(f"entities={', '.join(entities)}")
 
     content_type = None
     content_match = NEW_CONTENT_RE.search(query)
@@ -130,7 +133,7 @@ def parse_query(query: str, version_dates: dict[int, str], today: Date | None = 
         "date_min": date_min,
         "date_max": date_max,
         "version_eq": version_eq,
-        "entity": entity,
+        "entities": entities,
         "content_type": content_type,
         "description": "; ".join(description_parts) or "none",
     }
@@ -214,7 +217,7 @@ def retrieve(
         patches = find_new_content(collection, parsed["content_type"], parsed)
         return {"query": query, "filter_description": parsed["description"], "patches": patches}
 
-    has_filter = any([parsed["date_min"], parsed["date_max"], parsed["version_eq"], parsed["entity"]])
+    has_filter = any([parsed["date_min"], parsed["date_max"], parsed["version_eq"], parsed["entities"]])
 
     # Scan the whole collection whenever a filter is active, so the metadata
     # post-filter below can't lose eligible chunks to a truncated top-k --
@@ -231,7 +234,7 @@ def retrieve(
             continue
         if parsed["version_eq"] and meta["version"] != parsed["version_eq"]:
             continue
-        if parsed["entity"] and parsed["entity"] not in meta["entity_mentioned"]:
+        if parsed["entities"] and not any(e in meta["entity_mentioned"] for e in parsed["entities"]):
             continue
         candidates.append({"text": doc, "meta": meta, "distance": dist})
 
@@ -249,7 +252,7 @@ def retrieve(
         # inverted since it's a similarity *distance* (lower = more similar).
         return c["rerank_score"] if "rerank_score" in c else -c["distance"]
 
-    if parsed["entity"] and len(by_patch) > 1:
+    if parsed["entities"] and len(by_patch) > 1:
         # A short boss/class name (e.g. "Baldrix") also shows up as one row in
         # unrelated multi-boss reward tables in other patches ("Defeat Baldrix
         # for N points", alongside a dozen other bosses) -- entity_mentioned
@@ -257,14 +260,24 @@ def retrieve(
         # and letting them count as "matching patches" was diluting the
         # per-patch chunk budget so thin that the one patch that actually
         # introduces Baldrix (and lists what it drops) lost its own relevant
-        # chunks to the cap. Keep only patches whose best chunk is close to
-        # the single best match found anywhere, not just present at all.
-        best_relevance = max(relevance(c) for c in candidates)
-        by_patch = {
-            version: chunks
-            for version, chunks in by_patch.items()
-            if max(relevance(c) for c in chunks) >= best_relevance - RELEVANCE_MARGIN
-        }
+        # chunks to the cap. Keep a patch only if it's a strong match for AT
+        # LEAST ONE requested entity -- judged per-entity (each against its
+        # own best match), not globally, so asking about two bosses at once
+        # doesn't let one's stronger embedding match crowd out the other's
+        # own home patch just because it scores a bit worse in isolation.
+        keep_versions: set[int] = set()
+        for entity_name in parsed["entities"]:
+            entity_by_patch: dict[int, list[dict]] = {}
+            for c in candidates:
+                if entity_name in c["meta"]["entity_mentioned"]:
+                    entity_by_patch.setdefault(c["meta"]["version"], []).append(c)
+            if not entity_by_patch:
+                continue
+            best_for_entity = max(relevance(c) for chunks in entity_by_patch.values() for c in chunks)
+            for version, chunks in entity_by_patch.items():
+                if max(relevance(c) for c in chunks) >= best_for_entity - RELEVANCE_MARGIN:
+                    keep_versions.add(version)
+        by_patch = {version: chunks for version, chunks in by_patch.items() if version in keep_versions}
 
     # When few patches match, let each keep more chunks instead of a flat cap --
     # e.g. a single-version query like "v.271" was losing specific facts (a
@@ -288,7 +301,7 @@ def retrieve(
 
     # Most-recent-first: a changelog reads newest-to-oldest, and that's what
     # someone asking "what's changed since X" actually wants to see first.
-    is_time_query = (parsed["date_min"] or parsed["date_max"]) and parsed["entity"] is not None
+    is_time_query = bool((parsed["date_min"] or parsed["date_max"]) and parsed["entities"])
     if is_time_query:
         patches.sort(key=lambda p: p["date"], reverse=True)
     else:

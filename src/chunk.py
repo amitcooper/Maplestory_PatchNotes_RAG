@@ -56,11 +56,34 @@ def clean_patch_name(raw_name: str) -> str:
     return name.strip(" -")
 
 
+# Some entity names double as ordinary phrasing in boilerplate eligibility
+# clauses -- "Zero characters that completed Story Quest Act 2" appears in
+# nearly every event's requirements regardless of whether that event has
+# anything to do with the Zero class. Verified against the actual data: of
+# 367 chunks mentioning "Zero", 325 (89%) were exactly this pattern; the
+# other 42 are genuine content ("Zero's Ego Weapon", "HEXA Wind Cutter" for
+# Zero, etc.), which phrase it differently and so aren't caught by this.
+ENTITY_EXCLUDE_SUFFIX = {
+    # No leading ^ -- .match(text, pos) already anchors to start exactly at
+    # pos; a ^ here would (counterintuitively) only ever match at absolute
+    # position 0 of the string, so this exclusion would silently never fire.
+    "Zero": re.compile(r"\s+[Cc]haracters?\b"),
+}
+
+
 def find_entities(text: str) -> list[str]:
     # Case-sensitive on purpose: proper nouns are capitalized in patch notes
     # prose, which is what keeps a common word like "Will" (the boss) from
     # matching every sentence that uses "will" as an auxiliary verb.
-    return [name for name, pattern in ENTITY_PATTERNS if pattern.search(text)]
+    found = []
+    for name, pattern in ENTITY_PATTERNS:
+        exclude_suffix = ENTITY_EXCLUDE_SUFFIX.get(name)
+        for m in pattern.finditer(text):
+            if exclude_suffix and exclude_suffix.match(text, m.end()):
+                continue
+            found.append(name)
+            break
+    return found
 
 
 def paragraphs_to_chunks(paragraphs: list[str], max_chars: int) -> list[str]:

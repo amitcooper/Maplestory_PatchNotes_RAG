@@ -27,8 +27,17 @@ COLLECTION_NAME = "maple_patch_notes"
 
 CHUNKS_PER_PATCH = 3
 MAX_PATCHES = 8
-MAX_TOTAL_CHUNKS = 15
-RELEVANCE_MARGIN = 0.15  # see the entity-filter patch-pruning note in retrieve()
+# Split across however many patches survive filtering (see per_patch_limit).
+# Needs to be generous: with a couple of patches, dividing a too-small
+# budget in half was enough to push a real fact (an item's own drop chunk,
+# ranked outside the per-patch top few by raw distance) back out of the
+# context -- confirmed by watching a real answer regress when a second,
+# weaker patch got admitted alongside the dominant one. 32 keeps the
+# many-patches case unchanged (~4/patch at MAX_PATCHES=8) while giving a
+# dominant single patch room for its full relevant chunk set even when 1-2
+# weaker patches ride along with it.
+MAX_TOTAL_CHUNKS = 32
+RELEVANCE_MARGIN = 0.3  # see the entity-filter patch-pruning note in retrieve()
 
 MONTHS = {
     "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
@@ -265,6 +274,17 @@ def retrieve(
         # own best match), not globally, so asking about two bosses at once
         # doesn't let one's stronger embedding match crowd out the other's
         # own home patch just because it scores a bit worse in isolation.
+        #
+        # MARGIN=0.3 is a real trade-off, not a clean answer: a class with
+        # genuine recurring content (e.g. Kaiser, balance-tweaked across many
+        # patches) forms a tight distance cluster ~0.75-0.83 with one
+        # standout best match ~0.58 -- and a genuinely single-patch entity's
+        # residual incidental mentions can land in that exact same 0.75-0.83
+        # range. There's no distance value that admits one cluster and
+        # excludes the other; a tighter margin (0.15) was tested and starved
+        # multi-patch entities down to a single result. This value favors not
+        # losing real multi-patch history over perfectly excluding a
+        # possible extra incidental patch or two.
         keep_versions: set[int] = set()
         for entity_name in parsed["entities"]:
             entity_by_patch: dict[int, list[dict]] = {}

@@ -71,6 +71,19 @@ ENTITY_EXCLUDE_SUFFIX = {
 }
 
 
+# A chunk that names more than this many distinct entities isn't really
+# "about" any single one of them -- it's a reference table (e.g. a boss
+# reward/difficulty table spanning a dozen bosses) or, just as often, several
+# different classes' one-line bug fixes that landed in the same chunk purely
+# because they're adjacent paragraphs under a generic heading like "General
+# Skill Bug Fixes" and fit the same size budget, not because they're related.
+# Confirmed on the real data: one v.257 chunk tags 29 different classes
+# (Kaiser among them) because it's a cross-class skill-name reference table,
+# and this was measurably diluting entity-filtered retrieval for classes like
+# Kaiser that also have genuine, specific per-patch skill changes elsewhere.
+MAX_ENTITIES_PER_CHUNK = 4
+
+
 def find_entities(text: str) -> list[str]:
     # Case-sensitive on purpose: proper nouns are capitalized in patch notes
     # prose, which is what keeps a common word like "Will" (the boss) from
@@ -83,6 +96,9 @@ def find_entities(text: str) -> list[str]:
                 continue
             found.append(name)
             break
+
+    if len(found) > MAX_ENTITIES_PER_CHUNK:
+        return []
     return found
 
 

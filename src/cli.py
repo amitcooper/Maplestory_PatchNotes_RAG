@@ -12,20 +12,32 @@ from pathlib import Path
 from dotenv import load_dotenv
 from groq import Groq
 
-from generate import build_context, generate_answer, print_sources
+from generate import build_context, generate_answer, print_sources, resolve_followup
 from retrieve import get_collection, load_version_dates, retrieve
 
 
-def answer_question(client: Groq, collection, version_dates: dict[int, str], question: str) -> None:
-    result = retrieve(question, collection, version_dates)
+def answer_question(
+    client: Groq, collection, version_dates: dict[int, str], question: str, history: list[dict]
+) -> None:
+    # Each call to retrieve()/generate_answer() is otherwise stateless -- a
+    # follow-up like "what does he drop" has nothing to resolve "he" against
+    # on its own. resolve_followup only fires an extra LLM call when the
+    # question actually looks ambiguous (see needs_followup_resolution).
+    resolved = resolve_followup(client, history, question)
+    if resolved != question:
+        print(f"(read as: {resolved})")
+
+    result = retrieve(resolved, collection, version_dates)
     if not result["patches"]:
         print("No matching patch notes found for this question.\n")
         return
     context = build_context(result)
-    answer = generate_answer(client, question, context)
+    answer = generate_answer(client, resolved, context)
     print(f"\n{answer}\n")
     print_sources(result)
     print()
+
+    history.append({"question": resolved, "answer": answer})
 
 
 def main() -> None:
@@ -45,6 +57,7 @@ def main() -> None:
     print('Ready. Ask about MapleStory patch notes, e.g. "what changed for Kaiser since March 2026".')
     print("Type 'exit' or Ctrl+C to quit.\n")
 
+    history: list[dict] = []
     while True:
         try:
             question = input("> ").strip()
@@ -58,7 +71,7 @@ def main() -> None:
             print("Bye.")
             break
 
-        answer_question(client, collection, version_dates, question)
+        answer_question(client, collection, version_dates, question, history)
 
 
 if __name__ == "__main__":

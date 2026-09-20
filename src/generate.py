@@ -6,12 +6,14 @@ redesign -- not built now since nothing in this project needs it yet.
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 from groq import Groq
 
+from chunk import KNOWN_ENTITIES
 from retrieve import get_collection, load_version_dates, retrieve
 
 MODEL = "openai/gpt-oss-120b"
@@ -39,6 +41,45 @@ def rewrite_query(client: Groq, question: str) -> str:
         messages=[
             {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
             {"role": "user", "content": question},
+        ],
+        temperature=0.0,
+    )
+    return response.choices[0].message.content.strip()
+
+
+FOLLOWUP_SYSTEM_PROMPT = """Given the recent conversation below, rewrite the user's latest \
+question into a fully self-contained question about MapleStory patch notes. Resolve any \
+pronoun or vague reference (he, she, it, that, those, this, the boss, the class, etc.) to the \
+specific named entity from the conversation. If the question already stands on its own, return \
+it completely unchanged. Return only the question, nothing else."""
+
+# Retrieval doesn't need to pay for an LLM call to notice a question is
+# already self-contained (names a real class/boss, or a version/date) --
+# only ambiguous-sounding follow-ups ("what about him", "does that stack")
+# are worth resolving against prior turns.
+PRONOUN_RE = re.compile(
+    r"\b(he|him|his|she|her|it|its|they|them|their|that|this|these|those|"
+    r"the boss|the class|the job|the skill|the item)\b",
+    re.IGNORECASE,
+)
+
+
+def needs_followup_resolution(question: str) -> bool:
+    lower = question.lower()
+    if any(re.search(r"\b" + re.escape(name.lower()) + r"\b", lower) for name in KNOWN_ENTITIES):
+        return False
+    return bool(PRONOUN_RE.search(question))
+
+
+def resolve_followup(client: Groq, history: list[dict], question: str) -> str:
+    if not history or not needs_followup_resolution(question):
+        return question
+    convo = "\n".join(f"Q: {turn['question']}\nA: {turn['answer'][:400]}" for turn in history[-2:])
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": FOLLOWUP_SYSTEM_PROMPT},
+            {"role": "user", "content": f"Recent conversation:\n{convo}\n\nLatest question: {question}"},
         ],
         temperature=0.0,
     )

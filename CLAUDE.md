@@ -76,13 +76,22 @@ These may return as stretch goals later, but are not part of the initial build.
 8. **Interface**
    - Minimal — command-line loop or basic Streamlit app is sufficient for v1. Do not over-invest in UI.
 
-## Tech Stack (finalized)
-- Orchestration: LangChain
-- Vector store: Chroma
-- Embeddings: sentence-transformers (free, local)
-- LLM: Groq API (Llama 3), Ollama as local alternative
-- Retrieval techniques: metadata filtering, query rewriting, cross-encoder reranking
-- Eval: hand-built test set, optionally RAGAS
+## Tech Stack (as built)
+- Orchestration: hand-rolled Python, not LangChain. The originally planned LangChain
+  layer was dropped: the compound entity+date metadata filtering, per-entity
+  patch-relevance pruning, and dynamic per-patch chunk budgeting this project's
+  retrieval needed (see `src/retrieve.py`) didn't map cleanly onto LangChain's
+  retriever abstraction, and calling the `chromadb`/`groq` SDKs directly gave more
+  control for less code.
+- Vector store: Chroma (`chromadb` SDK directly)
+- Embeddings: sentence-transformers, `all-MiniLM-L6-v2` (free, local)
+- LLM: Groq API (`openai/gpt-oss-120b`). Ollama local fallback was deferred, not
+  built — nothing in v1 needed it.
+- Retrieval techniques: metadata filtering (date/version/entity) is always on.
+  Cross-encoder reranking and LLM query rewriting are both implemented but left
+  **off by default** — Phase 7 eval found reranking neutral and rewriting actively
+  harmful on this corpus (see README). Both remain available as opt-in flags.
+- Eval: hand-built test set (`src/eval.py`); RAGAS not used — not needed for v1
 - Version control: Git/GitHub, phase-by-phase commits
 
 ## Key Differentiators to Build Toward

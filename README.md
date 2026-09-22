@@ -77,3 +77,11 @@ python src/cli.py
 ```
 
 Loads the embedding model, vector store, and Groq client once, then answers questions in a loop instead of paying that startup cost on every invocation like `generate.py` does. Type `exit` or Ctrl+C to quit.
+
+## Tests
+
+```
+pytest tests/
+```
+
+Unit tests for the two most silently-regressable pieces of logic: `parse_query`'s date/version/entity/content-type parsing (`src/retrieve.py`), and `find_entities`/`paragraphs_to_chunks`'s entity-tagging edge cases and paragraph-packing rule (`src/chunk.py`). No network, embedding model, or vector store required.

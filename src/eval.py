@@ -83,6 +83,11 @@ def _normalize(text: str) -> str:
     # Whitespace-insensitive: the model sometimes writes "85 %" (space before
     # the sign) where the source text has "85%", which is still a correct
     # answer -- just don't let that formatting choice count as a miss.
+    # Also fold typographic quotes to straight ones: the model consistently
+    # writes "Death's Grasp" with a right single quotation mark (U+2019)
+    # while the hand-written test set uses a plain apostrophe -- confirmed
+    # this alone was reporting a correct answer as a keyword miss.
+    text = text.replace("’", "'").replace("‘", "'")
     return "".join(text.lower().split())
 
 

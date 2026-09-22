@@ -18,15 +18,22 @@ from retrieve import get_collection, load_version_dates, retrieve
 
 MODEL = "openai/gpt-oss-120b"
 
-SYSTEM_PROMPT = """You are a knowledgeable MapleStory player explaining recent changes to a \
-friend, using only the official patch notes excerpts provided below. Rules:
-- Only use information in the provided excerpts. If they don't answer the question, say so plainly.
-- Write like you're actually talking to someone: normal paragraphs and sentences. Don't default \
-to a table or a bare bullet list of stat deltas unless the question is itself a request for a \
-list (e.g. "list every boss added"). Explain what a change means, not just the raw before/after numbers.
-- Every claim about something that changed must cite which patch it's from (e.g. "v.269 - Ride the Lightning, 2026-06-16").
-- The excerpts are given newest patch first -- lead with the most recent change, then work backward if there's history worth mentioning.
-- Be concise. Don't pad the answer with information the excerpts don't contain."""
+SYSTEM_PROMPT = """You are answering a MapleStory player's question using only the official patch \
+notes excerpts provided below. Rules:
+- Be short: state the change itself in one line per relevant patch, with no mechanics, numbers, \
+lore, or context beyond what directly answers the question, and no closing summary or offer to help further.
+- Cover every patch in the excerpts that's actually relevant to the question -- brevity means \
+cutting detail per patch, not dropping a whole patch that has a real answer just because a newer \
+one also does. If a given patch's excerpts have nothing relevant, leave that patch out entirely.
+- Only use information in the provided excerpts. If they don't answer the question, say so in one sentence.
+- If the question asks for a list of items (e.g. "which bosses were added"), answer as one line per \
+item: name, then patch/date, then at most a short clause of relevant detail -- not a paragraph per item.
+- If the question asks what rewards/items a boss (or several bosses) grants, structure the answer \
+per boss: the boss's name and patch/date on its own line, then every reward item on its own separate \
+line below it -- never merge multiple rewards into one sentence. If a reward carries stat bonuses \
+(STR/DEX/INT/LUK, Max HP/MP, Attack, etc.), list those stats too, not just the item's name.
+- Every claim must cite which patch it's from (e.g. "v.269 - Ride the Lightning, 2026-06-16").
+- The excerpts are given newest patch first -- lead with the most recent."""
 
 REWRITE_SYSTEM_PROMPT = """Rewrite the user's question into a short, keyword-dense search \
 query for a semantic search engine over MapleStory patch notes. Keep any class/boss/item \
@@ -53,28 +60,34 @@ pronoun or vague reference (he, she, it, that, those, this, the boss, the class,
 specific named entity from the conversation. If the question already stands on its own, return \
 it completely unchanged. Return only the question, nothing else."""
 
-# Retrieval doesn't need to pay for an LLM call to notice a question is
-# already self-contained (names a real class/boss, or a version/date) --
-# only ambiguous-sounding follow-ups ("what about him", "does that stack")
-# are worth resolving against prior turns.
-PRONOUN_RE = re.compile(
-    r"\b(he|him|his|she|her|it|its|they|them|their|that|this|these|those|"
-    r"the boss|the class|the job|the skill|the item)\b",
-    re.IGNORECASE,
-)
-
-
 def needs_followup_resolution(question: str) -> bool:
+    # Retrieval doesn't need to pay for an LLM call when a question already
+    # names a real class/boss/item -- it's self-contained regardless of
+    # phrasing. But trying to shortcut the other direction with a hardcoded
+    # list of "vague" words (he/it/that/the boss/...) doesn't work: a real
+    # follow-up like "what items can I get from each?" uses a word ("each")
+    # that was never on the list, so it silently skipped resolution entirely
+    # and went to retrieval with no entity to anchor on -- confirmed this is
+    # exactly why that question returned an unrelated grab-bag of items from
+    # across the whole corpus. A question naming no known entity can't
+    # retrieve correctly on its own anyway, so there's no real list of "vague
+    # enough to resolve" words to maintain -- just always try resolving
+    # anything that doesn't already name an entity, and trust the resolver's
+    # own instruction to return an already-self-contained question unchanged.
     lower = question.lower()
-    if any(re.search(r"\b" + re.escape(name.lower()) + r"\b", lower) for name in KNOWN_ENTITIES):
-        return False
-    return bool(PRONOUN_RE.search(question))
+    return not any(re.search(r"\b" + re.escape(name.lower()) + r"\b", lower) for name in KNOWN_ENTITIES)
 
 
 def resolve_followup(client: Groq, history: list[dict], question: str) -> str:
     if not history or not needs_followup_resolution(question):
         return question
-    convo = "\n".join(f"Q: {turn['question']}\nA: {turn['answer'][:400]}" for turn in history[-2:])
+    # 400 chars silently dropped the tail of any list-style answer -- e.g. a
+    # 5-item "which bosses were added" answer runs past 400 chars, so a
+    # follow-up naming the last item ("Baldrix") never saw it and dropped it
+    # from the resolved question entirely. 2000 comfortably covers a list
+    # answer (SYSTEM_PROMPT already keeps these short) while still bounding
+    # the cost of this cheap resolution call.
+    convo = "\n".join(f"Q: {turn['question']}\nA: {turn['answer'][:2000]}" for turn in history[-2:])
     response = client.chat.completions.create(
         model=MODEL,
         messages=[

@@ -32,6 +32,13 @@ item: name, then patch/date, then at most a short clause of relevant detail -- n
 per boss: the boss's name and patch/date on its own line, then every reward item on its own separate \
 line below it -- never merge multiple rewards into one sentence. If a reward carries stat bonuses \
 (STR/DEX/INT/LUK, Max HP/MP, Attack, etc.), list those stats too, not just the item's name.
+- If the question asks to explain/introduce a class (e.g. "explain the Ren class", "tell me about \
+X"), lead with its introduction facts as separate labeled lines -- Class, Job, Primary Stat, \
+Secondary Stat, Primary Weapon, Secondary Weapon, Link Skill -- using only whichever of those the \
+excerpts actually give (skip any not present, don't guess). "Class" in the excerpts names the job's \
+faction/category (e.g. Anima, Explorer, Resistance) -- it is never the same word as the job's own \
+name the question asked about, even when the question colloquially calls the job itself a "class". \
+Only after these facts, list later balance changes briefly, one line per patch.
 - Every claim must cite which patch it's from (e.g. "v.269 - Ride the Lightning, 2026-06-16").
 - The excerpts are given newest patch first -- lead with the most recent."""
 

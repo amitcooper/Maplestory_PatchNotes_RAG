@@ -74,6 +74,18 @@ CONTENT_TYPE_KEYWORDS = {
 NEWNESS_RE = re.compile(r"\b(new|newest|added|introduced|introduce)\b", re.IGNORECASE)
 CONTENT_TYPE_WORD_RE = re.compile(r"\b(" + "|".join(CONTENT_TYPE_KEYWORDS) + r")\b", re.IGNORECASE)
 
+# A chunk whose subsection is an entity's own "New Job/Boss/Area: X"
+# introduction is the closest thing to a canonical, definitional fact about
+# it -- but its terse, tabular text ("Class Anima Job Warrior Primary Stat
+# STR...") often ranks below full-sentence skill/bug-fix descriptions by
+# plain embedding distance to a generic question. Confirmed: this is why
+# Ren's actual class/job/stat/weapon/link-skill overview never made it into
+# a "explain the Ren class" answer even after find_entities() correctly
+# tagged it -- the flat per-patch chunk cap (see retrieve()) excluded it in
+# favor of several more narrowly-worded skill-description chunks that
+# happened to rank closer by distance.
+INTRO_HEADING_RE = re.compile(r"^(?:\[[^\]]*\]\s*)?new\s+(?:job|boss|area)\s*:", re.IGNORECASE)
+
 
 def resolve_month_year(month_name: str, year: str | None, today: Date) -> Date:
     month = MONTHS[month_name.lower()]
@@ -326,6 +338,15 @@ def retrieve(
 
     patches = []
     for version, chunks in by_patch.items():
+        if parsed["entities"]:
+            intro_chunks = [
+                c for c in chunks
+                if INTRO_HEADING_RE.match(c["meta"]["subsection"] or "")
+                and any(e in c["meta"]["entity_mentioned"] for e in parsed["entities"])
+            ]
+            if intro_chunks:
+                rest = [c for c in chunks if c not in intro_chunks]
+                chunks = intro_chunks + rest
         chunks = chunks[:per_patch_limit]  # already ranked (reranked if use_reranker)
         patches.append(
             {

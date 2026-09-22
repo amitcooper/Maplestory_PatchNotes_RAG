@@ -113,7 +113,20 @@ def split_into_sections(body_html: str) -> list[dict]:
             current_subsection = None
         elif tag.name == "h2":
             flush()
-            current_subsection = text
+            # "Quick Overview" is a generic label reused for every new job's
+            # (and boss's, event's, ...) at-a-glance stat/weapon/link-skill
+            # table across the whole corpus -- it never names the entity
+            # itself, unlike its preceding sibling heading ("New Job: Ren").
+            # Resetting current_subsection to it would strip that entity's
+            # name away right where it matters most: confirmed this is why
+            # Ren's actual class/job/stat/weapon/link-skill table was never
+            # tagged with "Ren" at all and so never matched a "Ren" query --
+            # find_entities() had no chance, since neither the heading nor
+            # the table's own body text ("Class Anima Job Warrior...") ever
+            # says "Ren". Keeping the prior subsection preserves that context
+            # for chunk.py's heading-prefix injection to carry into the text.
+            if text != "Quick Overview":
+                current_subsection = text
         else:
             current_texts.append(text)
     flush()

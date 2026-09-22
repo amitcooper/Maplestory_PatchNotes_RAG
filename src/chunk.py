@@ -103,16 +103,30 @@ def find_entities(text: str) -> list[str]:
 
 
 def paragraphs_to_chunks(paragraphs: list[str], max_chars: int) -> list[str]:
+    # Packing by character budget alone isn't enough once table rows are
+    # split one-class/boss-per-paragraph (see clean.py): several single-class
+    # rows easily fit under max_chars together, but if each names a different
+    # class, the packed chunk can still cross MAX_ENTITIES_PER_CHUNK -- which
+    # then zeroes out entity tagging for the whole chunk, including whichever
+    # real fact triggered this in the first place. Tracking the running
+    # distinct-entity count during packing (not just after the fact) avoids
+    # ever assembling a chunk that would trip that cap.
     chunks = []
     current: list[str] = []
     current_len = 0
+    current_entities: set[str] = set()
     for para in paragraphs:
-        if current and current_len + len(para) + 1 > max_chars:
+        para_entities = set(find_entities(para))
+        exceeds_chars = current_len + len(para) + 1 > max_chars
+        exceeds_entities = len(current_entities | para_entities) > MAX_ENTITIES_PER_CHUNK
+        if current and (exceeds_chars or exceeds_entities):
             chunks.append("\n".join(current))
             current = []
             current_len = 0
+            current_entities = set()
         current.append(para)
         current_len += len(para) + 1
+        current_entities |= para_entities
     if current:
         chunks.append("\n".join(current))
     return chunks

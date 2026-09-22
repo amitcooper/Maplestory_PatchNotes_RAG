@@ -64,9 +64,15 @@ CONTENT_TYPE_KEYWORDS = {
     "boss": "Boss", "bosses": "Boss",
     "area": "Area", "areas": "Area", "map": "Area", "maps": "Area", "region": "Area",
 }
-NEW_CONTENT_RE = re.compile(
-    r"\bnew\s+(" + "|".join(CONTENT_TYPE_KEYWORDS) + r")\b", re.IGNORECASE
-)
+# Matching only the literal adjacent phrase "new boss(es)" missed common
+# rephrasings like "which bosses were added recently" -- confirmed: that exact
+# query fell through to unfiltered semantic search over the whole corpus and
+# missed real additions (Baldrix, Malefic Star, Kai, Jupiter) that the heading
+# scan below would have caught easily. Checking for a "newness" word and a
+# content-type word anywhere in the query (not necessarily adjacent) covers
+# those phrasings without needing to enumerate every possible wording.
+NEWNESS_RE = re.compile(r"\b(new|newest|added|introduced|introduce)\b", re.IGNORECASE)
+CONTENT_TYPE_WORD_RE = re.compile(r"\b(" + "|".join(CONTENT_TYPE_KEYWORDS) + r")\b", re.IGNORECASE)
 
 
 def resolve_month_year(month_name: str, year: str | None, today: Date) -> Date:
@@ -133,9 +139,9 @@ def parse_query(query: str, version_dates: dict[int, str], today: Date | None = 
         description_parts.append(f"entities={', '.join(entities)}")
 
     content_type = None
-    content_match = NEW_CONTENT_RE.search(query)
-    if content_match:
-        content_type = CONTENT_TYPE_KEYWORDS[content_match.group(1).lower()]
+    type_match = CONTENT_TYPE_WORD_RE.search(query)
+    if type_match and NEWNESS_RE.search(query):
+        content_type = CONTENT_TYPE_KEYWORDS[type_match.group(1).lower()]
         description_parts.append(f"new-content-type={content_type}")
 
     return {

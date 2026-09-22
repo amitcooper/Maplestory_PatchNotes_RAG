@@ -16,7 +16,7 @@ from pathlib import Path
 import chromadb
 from chromadb.utils import embedding_functions
 
-from chunk import KNOWN_ENTITIES
+from chunk import AREAS, KNOWN_ENTITIES
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 # Must match embed.py: kept outside the OneDrive-synced project folder,
@@ -171,6 +171,13 @@ def find_new_content(collection: chromadb.Collection, content_type: str, parsed:
     # patch notes consistently use, rather than relying on semantic ranking
     # to surface a handful of relevant chunks out of ~3000.
     heading_re = re.compile(r"^(?:\[[^\]]*\]\s*)?new\s+" + re.escape(content_type) + r"\s*:", re.IGNORECASE)
+    # An area isn't always announced with a "New Area:" heading -- confirmed:
+    # v.257's Tallahart, introduced as that whole patch's own theme rather
+    # than a small side addition, is headed just "Tallahart", so it never
+    # matched heading_re and was silently missing from "what new areas were
+    # added" answers. A bare heading that exactly names a known area is an
+    # equally reliable signal, so it's checked as a fallback.
+    bare_area_names = {name.lower() for name in AREAS} if content_type == "Area" else set()
     all_items = collection.get(include=["documents", "metadatas"])
 
     # Group by (version, subsection) rather than just version: a single patch
@@ -180,7 +187,12 @@ def find_new_content(collection: chromadb.Collection, content_type: str, parsed:
     # entirely once the cap was hit.
     by_subsection: dict[tuple[int, str], list[dict]] = {}
     for doc, meta in zip(all_items["documents"], all_items["metadatas"]):
-        if not meta["subsection"] or not heading_re.match(meta["subsection"]):
+        subsection = meta["subsection"]
+        if not subsection:
+            continue
+        matches_heading = heading_re.match(subsection)
+        matches_bare_area = subsection.strip().lower() in bare_area_names
+        if not (matches_heading or matches_bare_area):
             continue
         if parsed["date_min"] and meta["date"] < parsed["date_min"]:
             continue

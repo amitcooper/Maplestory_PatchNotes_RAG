@@ -44,9 +44,18 @@ BOSSES = [
     "Malefic Star", "Limbo", "Baldrix", "Jupiter", "Kai",
 ]
 
+# New areas introduced within the scraped corpus. Most patches title their
+# new-area section "New Area: X" (caught directly in retrieve.py), but
+# v.257's Tallahart doesn't -- it's the corpus's very first patch, and its
+# region is the whole patch's theme rather than a small side addition, so its
+# section is just headed "Tallahart". Having it here means area-introduction
+# detection in retrieve.py doesn't have to rely on heading text alone, and
+# general entity-filtered queries (e.g. "what changed in Tallahart") work too.
+AREAS = ["Tallahart", "Oort", "Vallora", "Geardock"]
+
 # Longest names first so e.g. "Kalos the Guardian" matches before a shorter
 # entity name that happens to be its substring would ever get the chance to.
-KNOWN_ENTITIES = sorted(set(CLASSES + BOSSES), key=len, reverse=True)
+KNOWN_ENTITIES = sorted(set(CLASSES + BOSSES + AREAS), key=len, reverse=True)
 ENTITY_PATTERNS = [(name, re.compile(r"\b" + re.escape(name) + r"\b")) for name in KNOWN_ENTITIES]
 
 

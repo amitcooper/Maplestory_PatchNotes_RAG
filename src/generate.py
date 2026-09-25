@@ -17,6 +17,27 @@ from chunk import KNOWN_ENTITIES
 from retrieve import get_collection, load_version_dates, retrieve
 
 MODEL = "openai/gpt-oss-120b"
+# Groq's free tier caps a single request at 8000 tokens/minute -- prompt +
+# completion combined (the system prompt alone is ~550 tokens) -- so the
+# excerpt context needs its own hard ceiling. 20000 chars (~5000 tokens at
+# the ~4 chars/token rule of thumb used elsewhere in this codebase) was
+# sized against the worst case actually seen: a single-patch "what new
+# content was added" question whose deterministic path (find_new_content,
+# retrieve.py) has no per-patch chunk cap and pulled 32 chunks / 24181
+# chars from one patch alone, which blew the request to 8217 tokens and
+# got a hard 413 from Groq. Truncating here protects every retrieval path.
+#
+# Deliberately NOT also capping the completion with max_tokens: this model
+# is a reasoning model that spends completion tokens on a hidden
+# `reasoning` field before the visible answer (confirmed via the Groq
+# response's completion_tokens_details.reasoning_tokens). A max_tokens=800
+# cap was tried and cut off a real 3-patch synthesis answer mid-reasoning
+# -- finish_reason "length" with an empty final answer -- since 800 wasn't
+# enough for reasoning + content together. The context cap above is
+# already what keeps total request size under Groq's limit; leave the
+# completion unbounded so the model always finishes reasoning and emits
+# its actual answer.
+MAX_CONTEXT_CHARS = 20000
 
 SYSTEM_PROMPT = """You are answering a MapleStory player's question using only the official patch \
 notes excerpts provided below. Rules:
@@ -107,16 +128,34 @@ def resolve_followup(client: Groq, history: list[dict], question: str) -> str:
 
 
 def build_context(result: dict) -> str:
+    # Enforce MAX_CONTEXT_CHARS at whole-chunk granularity rather than
+    # truncating the final string, so nothing gets cut mid-sentence.
+    # result["patches"] is already newest-first, and within a patch,
+    # retrieve()'s chunk ordering already puts its highest-priority
+    # chunks first (intro chunks, then rank order) -- so once the budget
+    # runs out, what gets dropped is consistently the lowest-priority
+    # material, never something ahead of higher-priority content that
+    # made the cut.
     blocks = []
+    total_chars = 0
     for patch in result["patches"]:
         header = f"### {patch['patch_name']} ({patch['date']})"
-        body = "\n\n".join(
-            f"[{c['meta']['section']}"
-            + (f" > {c['meta']['subsection']}" if c["meta"]["subsection"] else "")
-            + f"]\n{c['text']}"
-            for c in patch["chunks"]
-        )
-        blocks.append(f"{header}\n{body}")
+        chunk_texts = []
+        for c in patch["chunks"]:
+            piece = (
+                f"[{c['meta']['section']}"
+                + (f" > {c['meta']['subsection']}" if c["meta"]["subsection"] else "")
+                + f"]\n{c['text']}"
+            )
+            if total_chars and total_chars + len(piece) > MAX_CONTEXT_CHARS:
+                break
+            chunk_texts.append(piece)
+            total_chars += len(piece)
+        if not chunk_texts:
+            # Budget exhausted before this (older) patch got a single chunk in --
+            # every later patch is even lower-priority, so stop entirely.
+            break
+        blocks.append(f"{header}\n" + "\n\n".join(chunk_texts))
     return "\n\n".join(blocks)
 
 

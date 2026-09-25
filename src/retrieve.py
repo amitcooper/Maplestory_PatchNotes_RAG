@@ -287,9 +287,18 @@ def retrieve(
         by_patch.setdefault(c["meta"]["version"], []).append(c)
 
     def relevance(c: dict) -> float:
-        # Higher is better either way: rerank_score already is, distance is
-        # inverted since it's a similarity *distance* (lower = more similar).
-        return c["rerank_score"] if "rerank_score" in c else -c["distance"]
+        # Always the (inverted) embedding distance, even when use_reranker
+        # reordered `candidates` above -- RELEVANCE_MARGIN below is tuned
+        # against *this* scale specifically (distances cluster ~0.55-0.85
+        # on this corpus, per the comment below). The cross-encoder's raw
+        # logit scores live on a completely different scale (confirmed
+        # empirically: roughly -11 to -4 here) -- using them here made the
+        # fixed 0.3 margin reject nearly every patch but the single top
+        # scorer, which is the confirmed cause of the reranker's measured
+        # recall drop in eval.py. Reranking still does its job: it already
+        # reordered `candidates`, so it still changes which chunks within a
+        # kept patch make the final per-patch cut below.
+        return -c["distance"]
 
     if parsed["entities"] and len(by_patch) > 1:
         # A short boss/class name (e.g. "Baldrix") also shows up as one row in

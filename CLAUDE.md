@@ -89,8 +89,10 @@ These may return as stretch goals later, but are not part of the initial build.
   built — nothing in v1 needed it.
 - Retrieval techniques: metadata filtering (date/version/entity) is always on.
   Cross-encoder reranking and LLM query rewriting are both implemented but left
-  **off by default** — Phase 7 eval found reranking neutral and rewriting actively
-  harmful on this corpus (see README). Both remain available as opt-in flags.
+  **off by default** — neither shows a clear recall win over the Phase 5 baseline
+  on this corpus (see README's Phase 7 section, which also covers a scale-mismatch
+  bug found and fixed in how reranking interacted with multi-patch clustering).
+  Both remain available as opt-in flags.
 - Eval: hand-built test set (`src/eval.py`); RAGAS not used — not needed for v1
 - Version control: Git/GitHub, phase-by-phase commits
 

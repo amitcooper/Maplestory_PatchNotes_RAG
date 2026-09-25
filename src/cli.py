@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from groq import Groq
 
-from generate import build_context, generate_answer, print_sources, resolve_followup
+from generate import get_answer, print_sources, resolve_followup
 from retrieve import get_collection, load_version_dates, retrieve
 
 
@@ -28,11 +28,12 @@ def answer_question(
         print(f"(read as: {resolved})")
 
     result = retrieve(resolved, collection, version_dates)
+    answer = get_answer(client, resolved, result)
+
     if not result["patches"]:
-        print("No matching patch notes found for this question.\n")
+        print(f"{answer}\n")
         return
-    context = build_context(result)
-    answer = generate_answer(client, resolved, context)
+
     print(f"\n{answer}\n")
     print_sources(result)
     print()

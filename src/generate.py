@@ -171,6 +171,23 @@ def generate_answer(client: Groq, question: str, context: str) -> str:
     return response.choices[0].message.content
 
 
+NO_MATCH_MESSAGE = "No matching patch notes found for this question."
+
+
+def get_answer(client: Groq, question: str, result: dict) -> str:
+    """Turn a retrieve() result into a final answer string: the fixed
+    NO_MATCH_MESSAGE when nothing was retrieved -- a deterministic decline,
+    with no LLM call and so nothing for the model to hallucinate from --
+    otherwise a real generated answer. Shared by cli.py, this module's
+    main(), and eval.py, so eval exercises the actual decline-vs-generate
+    branch the live app runs, not a separate reimplementation of it.
+    """
+    if not result["patches"]:
+        return NO_MATCH_MESSAGE
+    context = build_context(result)
+    return generate_answer(client, question, context)
+
+
 def print_sources(result: dict) -> None:
     print("\nSources:")
     for patch in result["patches"]:
@@ -194,19 +211,13 @@ def main() -> None:
     collection = get_collection()
     version_dates = load_version_dates()
     result = retrieve(question, collection, version_dates)
-
-    if not result["patches"]:
-        print(f"Query: {question!r}")
-        print("No matching patch notes found for this question.")
-        return
-
-    context = build_context(result)
     client = Groq(api_key=api_key)
-    answer = generate_answer(client, question, context)
+    answer = get_answer(client, question, result)
 
     print(f"Query: {question!r}\n")
     print(answer)
-    print_sources(result)
+    if result["patches"]:
+        print_sources(result)
 
 
 if __name__ == "__main__":

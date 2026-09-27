@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from groq import Groq
 
 from chunk import KNOWN_ENTITIES
+from llm_cache import get as cache_get, put as cache_put
 from retrieve import get_collection, load_version_dates, retrieve
 
 MODEL = "openai/gpt-oss-120b"
@@ -71,6 +72,10 @@ Return only the rewritten query, nothing else."""
 
 
 def rewrite_query(client: Groq, question: str) -> str:
+    cache_key = (MODEL, REWRITE_SYSTEM_PROMPT, question)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
@@ -79,7 +84,9 @@ def rewrite_query(client: Groq, question: str) -> str:
         ],
         temperature=0.0,
     )
-    return response.choices[0].message.content.strip()
+    rewritten = response.choices[0].message.content.strip()
+    cache_put(cache_key, rewritten)
+    return rewritten
 
 
 FOLLOWUP_SYSTEM_PROMPT = """Given the recent conversation below, rewrite the user's latest \
@@ -116,6 +123,10 @@ def resolve_followup(client: Groq, history: list[dict], question: str) -> str:
     # answer (SYSTEM_PROMPT already keeps these short) while still bounding
     # the cost of this cheap resolution call.
     convo = "\n".join(f"Q: {turn['question']}\nA: {turn['answer'][:2000]}" for turn in history[-2:])
+    cache_key = (MODEL, FOLLOWUP_SYSTEM_PROMPT, convo, question)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
@@ -124,7 +135,9 @@ def resolve_followup(client: Groq, history: list[dict], question: str) -> str:
         ],
         temperature=0.0,
     )
-    return response.choices[0].message.content.strip()
+    resolved = response.choices[0].message.content.strip()
+    cache_put(cache_key, resolved)
+    return resolved
 
 
 def build_context(result: dict) -> str:
@@ -160,6 +173,18 @@ def build_context(result: dict) -> str:
 
 
 def generate_answer(client: Groq, question: str, context: str) -> str:
+    # Cache key folds in MODEL and SYSTEM_PROMPT, not just (question, context)
+    # -- a prompt tweak or model swap invalidates every affected entry
+    # automatically rather than silently serving an answer written under an
+    # old prompt. This is what makes eval.py's repeated dev-loop reruns free
+    # after the first one: same question + same retrieved context (which is
+    # itself deterministic for a given retrieval config) means a guaranteed
+    # cache hit instead of a repeat Groq call for an answer that would come
+    # back the same anyway.
+    cache_key = (MODEL, SYSTEM_PROMPT, question, context)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
@@ -168,7 +193,9 @@ def generate_answer(client: Groq, question: str, context: str) -> str:
         ],
         temperature=0.2,
     )
-    return response.choices[0].message.content
+    answer = response.choices[0].message.content
+    cache_put(cache_key, answer)
+    return answer
 
 
 NO_MATCH_MESSAGE = "No matching patch notes found for this question."

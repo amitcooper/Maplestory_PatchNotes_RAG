@@ -1,6 +1,39 @@
 # MapleStory Patch Notes RAG
 
-A RAG system that answers questions about how MapleStory has changed over time, based only on official patch notes. See `CLAUDE.md` for the full project spec.
+A RAG system that answers questions about how a live game has changed over time, using only official patch notes as its source of truth. Ask "what changed for Kaiser since March 2026" and it retrieves the relevant excerpts across every patch that actually touched Kaiser in that window, and synthesizes one answer that cites the specific patch/date for each claim -- instead of you scrolling through 15 patch notes by hand. See `CLAUDE.md` for the full project spec.
+
+It's deliberately not a general MapleStory Q&A bot -- it never answers from wiki/guide knowledge, only from the scraped patch notes, and its whole value is tracking *change over time* across many patches, not single-document lookup.
+
+## Why this isn't just "call an embedding API"
+
+Most retrieval-augmented demos stop at: embed some documents, embed the query, take the top-k, hand it to an LLM. Two things here go further, because the actual question type this project targets ("what changed since X") doesn't work with top-k similarity alone:
+
+- **Metadata filtering is always on, semantic similarity is secondary.** Every query is first parsed for a date range, a specific patch version, and any of 72 known class/boss/area names (`retrieve.py`'s `parse_query`), and chunks are filtered on that *before* semantic ranking touches them. A query for "Kaiser" only ever ranks chunks actually tagged with Kaiser in the right date range -- semantic similarity picks the best of that filtered set, it doesn't decide the set.
+- **Retrieval returns a spread across patches, not one best-matching chunk.** Top-k similarity naturally collapses toward whichever single chunk embeds closest to the query, which is wrong for "what changed since X" -- that question needs one relevant chunk from *each* patch that changed something, not five near-duplicate chunks from the one patch that changed the most. `retrieve()` groups by patch version and gives each surviving patch its own chunk budget (scaled up when few patches match, so a narrow query doesn't get starved by a cap sized for the broad case).
+
+Two optional techniques (cross-encoder reranking, LLM query rewriting) are implemented and were tested against this design, not assumed to help -- see **Phase 7** below for what the eval actually found, including a real bug the eval caught: the reranker was measurably *hurting* retrieval recall (1.00 -> 0.86) because a tuning constant from the semantic-distance code path was silently being applied to the reranker's completely different score scale. Fixed and re-verified; both techniques are correct now, and still off by default because neither shows a clear win over the baseline on this corpus.
+
+## Architecture
+
+```
+scrape.py  -->  clean.py  -->  chunk.py  -->  embed.py   -->   retrieve.py  -->  generate.py
+(Nexon CMS     (HTML to      (~800-char    (sentence-       (metadata        (Groq LLM,
+ API, raw       structured    chunks +      transformers -->  filter + rank    cites patch/
+ JSON)          sections)     metadata)     Chroma)          + per-patch      date per claim)
+                                                              budget)
+```
+`cli.py` wraps `retrieve.py` + `generate.py` in an interactive loop (with follow-up resolution across turns); `eval.py` is the harness that scores the whole thing end-to-end. Full stack and per-decision rationale in `CLAUDE.md`.
+
+## Results (Phase 7 eval, 12-question hand-built test set)
+
+| Metric | Result |
+|---|---|
+| Retrieval recall (right patches pulled?) | 1.00 across baseline / +reranker / +rewrite / +both |
+| Negative-control clean rate (correctly says "no info" instead of hallucinating) | 1.00 |
+| Answer keyword hit rate (right facts in the generated answer?) | 1.00 |
+| Citation validity (every cited patch actually in the retrieved context) | 10/10 |
+
+These numbers come from a small, hand-verified test set by design -- one of this project's stated `CLAUDE.md` goals is keeping the dataset "small enough to fully read and manually verify every answer," and the eval set inherits that same tradeoff: sized to be fully readable and checkable against the actual scraped patches, not a statistically powered benchmark. The negative controls and citation check exist specifically to test failure modes recall alone can't catch (hallucinating an answer for an unanswerable question; fabricating a citation), not just to inflate a recall number.
 
 ## Setup
 

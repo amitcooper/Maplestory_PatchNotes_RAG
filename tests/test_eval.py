@@ -68,6 +68,16 @@ def test_citation_versions_valid_true_when_all_cited_versions_retrieved():
     assert citation_versions_valid("Changed in v.271 and v.269.", _result(269, 271)) is True
 
 
+def test_citation_versions_valid_ignores_lv_level_phrasing():
+    # "Lv. 210" (a character level, from real patch-note phrasing) must not
+    # be misread as a citation to v.210 -- confirmed as a real false
+    # positive from a live eval run before CITATION_RE gained its leading
+    # \b. Only v.271 (a real citation) is retrieved here, so this must
+    # still come back True, not False on the phantom "v.210".
+    answer = "v.271 - Decreased EXP required to level up from Lv. 210-259."
+    assert citation_versions_valid(answer, _result(271)) is True
+
+
 def test_citation_versions_valid_false_on_fabricated_citation():
     # v.999 was never in the retrieved context -- this is exactly the
     # fabricated-citation case the check exists to catch.

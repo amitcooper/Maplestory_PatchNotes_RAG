@@ -99,8 +99,11 @@ TEST_SET = [
 
 # Matches how the system prompt asks the model to cite patches, e.g.
 # "v.269 - Ride the Lightning, 2026-06-16" -- loose on punctuation/spacing
-# since that's not the thing being checked here.
-CITATION_RE = re.compile(r"v\.?\s?(\d{3})\b", re.IGNORECASE)
+# since that's not the thing being checked here. The leading \b is load-
+# bearing: without it this also matched the "v." inside "Lv. 210" (patch
+# notes phrase levels as "Lv. NNN") as a fake citation to v.210 --
+# confirmed as a real false positive from a live eval run.
+CITATION_RE = re.compile(r"\bv\.?\s?(\d{3})\b", re.IGNORECASE)
 
 
 def retrieval_recall(result: dict, expected_versions: list[int]) -> float | None:
